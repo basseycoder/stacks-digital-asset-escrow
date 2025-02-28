@@ -1,0 +1,23 @@
+[project]
+name = "digit"
+authors = []
+description = ""
+telemetry = true
+requirements = []
+cache_dir = "/home/runner/workspace/a/digit/./.requirements"
+boot_contracts = ["pox", "costs-v2", "bns"]
+[contracts.stacks-digital-asset]
+path = "contracts/stacks-digital-asset.clar"
+
+[repl]
+costs_version = 2
+parser_version = 2
+
+[repl.analysis]
+passes = ["check_checker"]
+
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false
