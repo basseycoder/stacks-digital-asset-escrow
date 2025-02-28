@@ -48,3 +48,108 @@
 (define-private (is-valid-escrow-id (escrow-id uint))
   (<= escrow-id (var-get last-escrow-id))
 )
+
+;; -------------------------------------------------------------
+;; Public Functions
+;; -------------------------------------------------------------
+
+;; Initiate a new escrow for a gaming asset
+(define-public (create-escrow (seller principal) (asset-code uint) (deposit uint))
+  (let 
+    (
+      (new-id (+ (var-get last-escrow-id) u1))
+      (expiry (+ block-height ESCROW_EXPIRATION_BLOCKS))
+    )
+    (asserts! (> deposit u0) ERR_INVALID_VALUE)
+    (asserts! (is-valid-seller seller) ERR_INVALID_SELLER)
+    (match (stx-transfer? deposit tx-sender (as-contract tx-sender))
+      success
+        (begin
+          (var-set last-escrow-id new-id)
+          (print {event: "escrow_created", escrow-id: new-id, buyer: tx-sender, seller: seller, asset-code: asset-code, deposit: deposit})
+          (ok new-id)
+        )
+      error ERR_TXN_FAILED
+    )
+  )
+)
+
+;; Complete an escrow and transfer the asset to the buyer
+(define-public (finalize-escrow (escrow-id uint))
+  (begin
+    (asserts! (is-valid-escrow-id escrow-id) ERR_INVALID_ID)
+    (let
+      (
+        (escrow-info (unwrap! (map-get? EscrowRecords { escrow-id: escrow-id }) ERR_MISSING_ESCROW))
+        (seller (get seller escrow-info))
+        (deposit (get deposit escrow-info))
+        (asset (get asset-code escrow-info))
+      )
+      (asserts! (or (is-eq tx-sender ESCROW_MANAGER) (is-eq tx-sender (get buyer escrow-info))) ERR_UNAUTHORIZED)
+      (asserts! (is-eq (get escrow-status escrow-info) "pending") ERR_ALREADY_PROCESSED)
+      (asserts! (<= block-height (get expires-at escrow-info)) ERR_ESCROW_TIMEOUT)
+      (match (as-contract (stx-transfer? deposit tx-sender seller))
+        success
+          (begin
+            (map-set EscrowRecords
+              { escrow-id: escrow-id }
+              (merge escrow-info { escrow-status: "completed" })
+            )
+            (print {event: "escrow_completed", escrow-id: escrow-id, seller: seller, asset-code: asset, deposit: deposit})
+            (ok true)
+          )
+        error ERR_TXN_FAILED
+      )
+    )
+  )
+)
+
+;; Refund the buyer in case of failed escrow
+(define-public (refund-buyer (escrow-id uint))
+  (begin
+    (asserts! (is-valid-escrow-id escrow-id) ERR_INVALID_ID)
+    (let
+      (
+        (escrow-info (unwrap! (map-get? EscrowRecords { escrow-id: escrow-id }) ERR_MISSING_ESCROW))
+        (buyer (get buyer escrow-info))
+        (deposit (get deposit escrow-info))
+      )
+      (asserts! (is-eq tx-sender ESCROW_MANAGER) ERR_UNAUTHORIZED)
+      (asserts! (is-eq (get escrow-status escrow-info) "pending") ERR_ALREADY_PROCESSED)
+      (match (as-contract (stx-transfer? deposit tx-sender buyer))
+        success
+          (begin
+            (map-set EscrowRecords
+              { escrow-id: escrow-id }
+              (merge escrow-info { escrow-status: "refunded" })
+            )
+            (print {event: "buyer_refunded", escrow-id: escrow-id, buyer: buyer, deposit: deposit})
+            (ok true)
+          )
+        error ERR_TXN_FAILED
+      )
+    )
+  )
+)
+
+;; -------------------------------------------------------------
+;; Read-Only Functions
+;; -------------------------------------------------------------
+
+;; Fetch escrow details
+(define-read-only (fetch-escrow (escrow-id uint))
+  (begin
+    (asserts! (is-valid-escrow-id escrow-id) ERR_INVALID_ID)
+    (match (map-get? EscrowRecords { escrow-id: escrow-id })
+      escrow-data (ok escrow-data)
+      ERR_MISSING_ESCROW
+    )
+  )
+)
+
+;; Retrieve the latest escrow ID created
+(define-read-only (latest-escrow-id)
+  (ok (var-get last-escrow-id))
+)
+
+
